@@ -2,6 +2,39 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Schematics:
+ *
+ *     CL21A226MQQNNNE
+ *      22 µF  6.3 V
+ * GND ------||-------- VCC
+ *         |    |
+ *         --)|--
+ *       5 F  2.7 V
+ *        BCAP0005
+ *
+ * P2.6 ----------|☐|-------- P2.7
+ *       32.768 kHz 12.5 pF
+ *         AB26T-32.768KHZ
+ *
+ *            ___        ↑↑↑
+ * P1.6 -----|___|-------|>|---- GND
+ *           1 kΩ     0603 Green
+ *
+ *            ___        ↑↑↑
+ * P2.3 -----|___|-------|>|---- GND
+ *           200 Ω    0603 Red
+ *                                      SRR1210-270M     P1.3-P1.5
+ *                                       27µH  5 A           |
+ *     -----------------------------------^^^^^^^------------------|>|----- VCC
+ *    _|_                    |                               | MBR120ESFT1G
+ *   / | \                   |                               |
+ *  | _|_ | ←  solar cell   _|_  132 µF 6.3 V            | |--
+ *  |  _  | ←   (ebay)      ___       6 x         P1.2 --| |<|  BSL802SN
+ *   \_|_/                   |   CL21A226MQQNNNE         | |-|
+ *     |                     |                               |
+ *    GND                   GND                             GND
+ */
+
 #define MOSFET BIT2
 #define SENSOR (BIT3|BIT4|BIT5)
 #define LED_G BIT6
@@ -10,16 +43,9 @@
 #define XIN BIT6
 #define XOUT BIT7
 
-#define XTAL 1
-
 int main() {
-#if XTAL
   BCSCTL3 = XCAP_3;
   WDTCTL = WDT_ADLY_1000;
-#else
-  BCSCTL3 |= LFXT1S_2;
-  WDTCTL = WDT_ADLY_250;
-#endif
 
   P1DIR = MOSFET | LED_G;
   P1OUT = 0x00;
@@ -83,7 +109,8 @@ static bool up;
 __interrupt void WDT_ISR() {
   ADC10CTL0 = REFON | REFBURST; // references take 30 µs @ 250 µA to settle
   P2OUT |= LED_R;
-  __delay_cycles(15);
+  P2OUT &= ~LED_R;
+  __delay_cycles(10);
 
   // 4 ADC10CLKs @ 6.3 MHz is enough since input is directly connected to a large cap
   ADC10CTL0 = SREF_1 | ADC10SHT_0 | REFON | ADC10ON | ADC10IE;
@@ -103,18 +130,13 @@ __interrupt void WDT_ISR() {
   ADC10CTL0 = 0x0000;
 
   if (vcc > 852) { // > 2.5 V: turn on LED
-#if 0
-    P2OUT &= ~LED_R;
-#else
+    P2OUT |= LED_R;
     if (vcc > 869) { // > 2.55 V: disable MPPT
       TACTL = TASSEL_1;
       TACCTL1 = 0;
       state = -1;
       return;
     }
-#endif
-  } else {
-    P2OUT &= ~LED_R;
   }
 
   bool was_off = state == -1;
@@ -150,10 +172,10 @@ __interrupt void WDT_ISR() {
         }
       } else { // !up
         if (energy < last_energy) {
-          state--;
-        } else {
           state++;
           up = true;
+        } else {
+          state--;
         }
       }
       last_energy = energy;
