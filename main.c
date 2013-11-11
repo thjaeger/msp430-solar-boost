@@ -86,11 +86,13 @@ static const uint16_t log_energy[96] = {
 #define STATES 42
 #define FIRST_STATE 12
 
-// takeWhile (/=1) $ iterate ((`div` 5) . (*4)) 32768
-static const uint16_t interval[STATES] = {
-  32768, 26214, 20971, 16776, 13420, 10736, 8588, 6870, 5496, 4396, 3516, 2812,
-  2249, 1799, 1439, 1151, 920, 736, 588, 470, 376, 300, 240, 192, 153, 122, 97,
-  77, 61, 48, 38, 30, 24, 19, 15, 12, 9, 7, 5, 4, 3, 2
+// intervals = takeWhile (/=1) $ iterate ((`div` 5) . (*4)) 32768
+
+// interval - 1
+static const uint16_t interval1[STATES] = {
+  32767, 26213, 20970, 16775, 13419, 10735, 8587, 6869, 5495, 4395, 3515, 2811,
+  2248, 1798, 1438, 1150, 919, 735, 587, 469, 375, 299, 239, 191, 152, 121, 96,
+  76, 60, 47, 37, 29, 23, 18, 14, 11, 8, 6, 4, 3, 2, 1
 };
 
 // 1024 * log₂ (32768 / interval)
@@ -186,7 +188,7 @@ __interrupt void WDT_ISR() {
     TACTL = TASSEL_1;
     TACCTL1 = 0;
   } else {
-    TACCR0 = interval[state];
+    TACCR0 = interval1[state];
     if (was_off) {
       TACCR1 = 1;
       TACCTL1 = OUTMOD_7;
