@@ -16,11 +16,11 @@
  *       32.768 kHz 12.5 pF
  *         AB26T-32.768KHZ
  *
- *            ___        ↑↑↑
+ *            ___        ↑↑
  * P1.6 -----|___|-------|>|---- GND
  *           1 kΩ     0603 Green
  *
- *            ___        ↑↑↑
+ *            ___        ↑↑
  * P2.3 -----|___|-------|>|---- GND
  *           200 Ω    0603 Red
  *                                      SRR1210-270M     P1.3-P1.5
@@ -65,26 +65,35 @@ int main() {
   LPM3;
 }
 
+// 47 mV -- 374 mV
+#define SENSOR_MIN 32
+#define SENSOR_MAX 256
+
 // (2¯¹⁵ s)² * (1.5 V / 512)² / 54 µH = 0.15 nJ
 // 2.5 V * 4.7 nC = 11.75 nJ
 // assuming 50% efficiency, energy is proportional to x^2 - 16
-// where x = ADC10MEM >> 1
-// start charging at 94 mV (x = 32)
-// always increase duty cycle at or above 374 mV (x = 128)
-// log_energy[y] = 1024 * log₂ (((y+32)² - 16)/1008)
-static const uint16_t log_energy[96] = {
-     0,   92,  182,  269,  353,  435,  515,  592,  668,  741,  813,  883,  952,
-  1019, 1084, 1148, 1211, 1272, 1332, 1391, 1449, 1506, 1561, 1616, 1669, 1722,
-  1773, 1824, 1874, 1923, 1971, 2019, 2065, 2111, 2157, 2201, 2245, 2289, 2331,
-  2373, 2415, 2456, 2496, 2536, 2575, 2614, 2652, 2690, 2727, 2764, 2800, 2836,
-  2871, 2906, 2941, 2975, 3009, 3043, 3076, 3108, 3141, 3173, 3204, 3236, 3267,
-  3297, 3328, 3358, 3388, 3417, 3446, 3475, 3504, 3532, 3560, 3588, 3615, 3643,
-  3670, 3696, 3723, 3749, 3775, 3801, 3827, 3852, 3877, 3902, 3927, 3951, 3976,
-  4000, 4024, 4048, 4071, 4095
+// where x = ADC10MEM / 2
+// log_energy[y] = 1024 * log₂ (x² - 16)
+// putStrLn $ concat $ Data.List.intersperse ", " $ ["INT16_MIN" | _ <- [0..4]] ++ [show $ round $ 1024 * log (x*x - 16) / log 2 | x <- [5..127]]
+static const int16_t log_energy[SENSOR_MAX/2] = {
+  INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN, INT16_MIN,
+   3246,  4426,  5165,  5719,  6167,  6546,  6875,  7168,  7432,  7672,  7892,
+   8097,  8287,  8465,  8633,  8791,  8941,  9083,  9219,  9348,  9472,  9591,
+   9705,  9815,  9921, 10023, 10121, 10217, 10309, 10399, 10485, 10570, 10652,
+  10731, 10809, 10884, 10958, 11030, 11100, 11169, 11236, 11301, 11365, 11428,
+  11489, 11549, 11608, 11666, 11722, 11778, 11832, 11886, 11938, 11990, 12041,
+  12091, 12140, 12188, 12236, 12282, 12328, 12373, 12418, 12462, 12505, 12548,
+  12590, 12631, 12672, 12713, 12752, 12792, 12830, 12869, 12906, 12944, 12980,
+  13017, 13053, 13088, 13123, 13158, 13192, 13226, 13259, 13292, 13325, 13357,
+  13389, 13421, 13452, 13483, 13514, 13544, 13575, 13604, 13634, 13663, 13692,
+  13720, 13749, 13777, 13804, 13832, 13859, 13886, 13913, 13940, 13966, 13992,
+  14018, 14043, 14069, 14094, 14119, 14144, 14168, 14193, 14217, 14241, 14264,
+  14288, 14311
 };
 
 #define STATES 42
 #define FIRST_STATE 12
+#define FAST_STEPS 4
 
 // intervals = takeWhile (/=1) $ iterate ((`div` 5) . (*4)) 32768
 
@@ -96,14 +105,14 @@ static const uint16_t interval1[STATES] = {
 };
 
 // 1024 * log₂ (32768 / interval)
-static const uint16_t log_count[STATES] = {
+static const int16_t log_count[STATES] = {
   0, 330, 659, 989, 1319, 1648, 1978, 2308, 2638, 2968, 3298, 3628, 3958, 4288,
   4617, 4947, 5278, 5608, 5940, 6270, 6600, 6934, 7263, 7593, 7928, 8263, 8602,
   8943, 9287, 9641, 9986, 10335, 10665, 11010, 11359, 11689, 12114, 12485,
   12982, 13312, 13737, 14336
 };
 
-static int8_t state = -1;
+static int16_t state = -1;
 static int16_t last_energy;
 static bool up;
 
@@ -144,26 +153,26 @@ __interrupt void WDT_ISR() {
   bool was_off = state == -1;
 
   if (was_off) { // no meaningful point of comparison
-    if (sensor < 64) // save as much energy as we can
+    if (sensor < SENSOR_MIN) // save as much energy as we can
       return;
     state = FIRST_STATE;
     up = false;
     last_energy = 0;
   } else {
-    if (sensor < 64) { // probably dark
-      state -= 4;
+    if (sensor < SENSOR_MIN) { // probably dark
+      state -= FAST_STEPS;
       if (state < -1)
         state = -1;
       up = false;
       last_energy = 0;
-    } else if (sensor > 255) { // very bright
-      state += 4;
+    } else if (sensor >= SENSOR_MAX) { // very bright
+      state += FAST_STEPS;
       if (state >= STATES)
         state = STATES - 1;
       up = true;
-      last_energy = 0xFFFF;
+      last_energy = INT16_MAX;
     } else { // MPPT
-      uint16_t energy = log_energy[(sensor >> 1) - 32] + log_count[state];
+      int16_t energy = log_energy[sensor/2] + log_count[state];
       if (up) {
         if (energy > last_energy) {
           if (state != STATES - 1)
